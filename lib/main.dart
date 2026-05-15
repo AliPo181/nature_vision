@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
@@ -52,6 +53,7 @@ class AppState extends ChangeNotifier {
   String name = '';
   int streak = 0;
   int currentPromptIndex = 0;
+  List<int> promptOrder = [];
   List<Memento> mementos = [];
 
   static const _prompts = [
@@ -60,10 +62,42 @@ class AppState extends ChangeNotifier {
     'Find something red in nature',
     'Find something another person might overlook',
     'Spot something that reminds you of a memory',
+    'Find a natural pattern that you find interesting',
+    'Capture something that makes a sound',
+    'Find something that feels alive',
+    'Find something that has an interesting smell',
+    'Find something that looks like it belongs to another world',
+    'Find something that makes you feel calm',
+    'Find something that looks like a piece of art',
+    'Find something that has an interesting texture',
+    'Find something that looks different from different angles',
+    'Find something that shows the passage of time',
+    'Find something that looks like it has a story to tell',
+    'Find something that contrasts with its surroundings',
+    'Find something that looks like it could be a tiny world',
+    'Find something that makes you curious',
+    'Find something that looks like it belongs in a fairy tale',
+    'Find something that makes you smile',
+    'Find something that looks like it could be a secret hiding spot',
+    'Find something that looks like it could be a magical creature',
+    'Find something that looks like it could be a natural sculpture',
+    'Find something that looks like it could be a natural piece of jewelry',
+    'Find something that looks like it could be a natural musical instrument',
   ];
 
-  String get currentPrompt => _prompts[currentPromptIndex % _prompts.length];
+  String get currentPrompt => _prompts[promptOrder[currentPromptIndex % promptOrder.length]];
   List<String> get allPrompts => _prompts;
+
+  void _ensurePromptOrder() {
+    if (promptOrder.length != _prompts.length) {
+      promptOrder = List.generate(_prompts.length, (index) => index);
+      promptOrder.shuffle(Random(DateTime.now().millisecondsSinceEpoch));
+    }
+  }
+
+  void _shufflePromptOrder() {
+    promptOrder.shuffle(Random(DateTime.now().millisecondsSinceEpoch));
+  }
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -71,6 +105,12 @@ class AppState extends ChangeNotifier {
     name = prefs.getString('name') ?? '';
     streak = prefs.getInt('streak') ?? 0;
     currentPromptIndex = prefs.getInt('promptIndex') ?? 0;
+    final rawOrder = prefs.getStringList('promptOrder');
+    if (rawOrder != null && rawOrder.length == _prompts.length) {
+      promptOrder = rawOrder.map(int.parse).toList();
+    }
+    _ensurePromptOrder();
+
     final raw = prefs.getString('mementos');
     if (raw != null) {
       final list = jsonDecode(raw) as List;
@@ -85,6 +125,7 @@ class AppState extends ChangeNotifier {
     await prefs.setString('name', name);
     await prefs.setInt('streak', streak);
     await prefs.setInt('promptIndex', currentPromptIndex);
+    await prefs.setStringList('promptOrder', promptOrder.map((i) => i.toString()).toList());
     await prefs.setString('mementos', jsonEncode(mementos.map((m) => m.toJson()).toList()));
   }
 
@@ -98,7 +139,33 @@ class AppState extends ChangeNotifier {
   Future<void> addMemento(Memento m) async {
     mementos.insert(0, m);
     currentPromptIndex++;
-    if (currentPromptIndex % _prompts.length == 0) streak++;
+    if (currentPromptIndex % _prompts.length == 0) {
+      streak++;
+      _shufflePromptOrder();
+    }
+    await save();
+    notifyListeners();
+  }
+
+  Future<void> skipPrompt() async {
+    currentPromptIndex++;
+    if (currentPromptIndex % _prompts.length == 0) {
+      _shufflePromptOrder();
+    }
+    await save();
+    notifyListeners();
+  }
+
+  Future<void> updateMemento(Memento oldMemento, Memento updatedMemento) async {
+    final index = mementos.indexWhere((m) => m.date.toIso8601String() == oldMemento.date.toIso8601String());
+    if (index == -1) return;
+    mementos[index] = updatedMemento;
+    await save();
+    notifyListeners();
+  }
+
+  Future<void> deleteMemento(Memento memento) async {
+    mementos.removeWhere((m) => m.date.toIso8601String() == memento.date.toIso8601String());
     await save();
     notifyListeners();
   }
@@ -180,7 +247,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
   }
 
-  void _finish() {
+  Future<void> _finish() async {
     final n = _nameCtrl.text.trim();
     if (n.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -188,11 +255,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       );
       return;
     }
-    widget.appState.completeOnboarding(n).then((_) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => MainShell(appState: widget.appState)),
-      );
-    });
+    await widget.appState.completeOnboarding(n);
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => MainShell(appState: widget.appState)),
+    );
   }
 
   @override
@@ -222,7 +289,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 width: _page == i ? 18 : 7,
                 height: 7,
                 decoration: BoxDecoration(
-                  color: _page == i ? NVColors.medium : NVColors.accent.withOpacity(0.4),
+                  color: _page == i ? NVColors.medium : NVColors.accent.withValues(alpha: 0.4),
                   borderRadius: BorderRadius.circular(4),
                 ),
               )),
@@ -465,6 +532,11 @@ class _WalkScreenState extends State<WalkScreen> {
     if (picked != null) setState(() => _photo = File(picked.path));
   }
 
+  Future<void> _pickGalleryPhoto() async {
+    final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+    if (picked != null) setState(() => _photo = File(picked.path));
+  }
+
   Future<void> _markDone() async {
     final note = _noteCtrl.text.trim();
     if (_photo == null && note.isEmpty) {
@@ -483,6 +555,35 @@ class _WalkScreenState extends State<WalkScreen> {
     setState(() { _done = true; _photo = null; _noteCtrl.clear(); });
     await Future.delayed(const Duration(seconds: 2));
     if (mounted) setState(() => _done = false);
+  }
+
+  Future<void> _skipPrompt() async {
+    if (_photo == null && _noteCtrl.text.trim().isEmpty) {
+      await widget.appState.skipPrompt();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Prompt skipped. The next prompt is ready.')),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Skip prompt?'),
+        content: const Text('You have a photo or note already. Skip this prompt anyway?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Skip')),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+    await widget.appState.skipPrompt();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Prompt skipped. The next prompt is ready.')),
+    );
   }
 
   @override
@@ -552,6 +653,19 @@ class _WalkScreenState extends State<WalkScreen> {
                   ),
                 ),
               ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _pickGalleryPhoto,
+                  icon: const Icon(Icons.photo_library_outlined, color: NVColors.medium),
+                  label: const Text('Gallery', style: TextStyle(color: NVColors.medium)),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: NVColors.light),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -583,6 +697,19 @@ class _WalkScreenState extends State<WalkScreen> {
               ),
             ),
           ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: _skipPrompt,
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: NVColors.light),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              child: const Text('Skip prompt', style: TextStyle(fontSize: 16, color: NVColors.medium)),
+            ),
+          ),
         ],
       ),
     );
@@ -611,9 +738,17 @@ class _WalkScreenState extends State<WalkScreen> {
 
 // ─── Journal Screen ───────────────────────────────────────────────────────────
 
-class JournalScreen extends StatelessWidget {
+class JournalScreen extends StatefulWidget {
   final AppState appState;
   const JournalScreen({super.key, required this.appState});
+
+  @override
+  State<JournalScreen> createState() => _JournalScreenState();
+}
+
+class _JournalScreenState extends State<JournalScreen> {
+  Memento? _selectedMemento;
+  final _picker = ImagePicker();
 
   @override
   Widget build(BuildContext context) {
@@ -633,12 +768,25 @@ class JournalScreen extends StatelessWidget {
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: NVColors.dark),
             ),
             const SizedBox(height: 12),
-            _CalendarGrid(appState: appState, year: now.year, month: now.month),
+            _CalendarGrid(
+              appState: widget.appState,
+              year: now.year,
+              month: now.month,
+              onEntrySelected: (entry) => setState(() => _selectedMemento = entry),
+            ),
             const SizedBox(height: 24),
+            if (_selectedMemento != null) ...[
+              _JournalDetail(
+                entry: _selectedMemento!,
+                onEdit: _editSelectedEntry,
+                onDelete: _deleteSelectedEntry,
+              ),
+              const SizedBox(height: 24),
+            ],
             const Text('Recent mementos',
                 style: TextStyle(fontSize: 13, color: NVColors.medium, letterSpacing: 0.5)),
             const SizedBox(height: 10),
-            if (appState.mementos.isEmpty)
+            if (widget.appState.mementos.isEmpty)
               const Center(
                 child: Padding(
                   padding: EdgeInsets.symmetric(vertical: 32),
@@ -647,20 +795,206 @@ class JournalScreen extends StatelessWidget {
                 ),
               )
             else
-              ...appState.mementos.map((m) => _MementoCard(m: m)).toList(),
+              ...widget.appState.mementos.map((m) => _MementoCard(m: m)),
           ],
         ),
       ),
     );
   }
 
+  Future<void> _deleteSelectedEntry() async {
+    final entry = _selectedMemento;
+    if (entry == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete memento?'),
+        content: const Text('This will remove the saved note and photo permanently.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await widget.appState.deleteMemento(entry);
+    setState(() => _selectedMemento = null);
+  }
+
+  Future<void> _editSelectedEntry() async {
+    final original = _selectedMemento;
+    if (original == null) return;
+    final noteCtrl = TextEditingController(text: original.note ?? '');
+    String? photoPath = original.photoPath;
+
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Edit memento', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 16),
+                  if (photoPath != null) ...[
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Image.file(File(photoPath!), height: 180, width: double.infinity, fit: BoxFit.cover),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+                            if (picked != null) {
+                              setModalState(() => photoPath = picked.path);
+                            }
+                          },
+                          icon: const Icon(Icons.photo_library_outlined),
+                          label: Text(photoPath == null ? 'Pick photo' : 'Replace photo'),
+                        ),
+                      ),
+                      if (photoPath != null) ...[
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () => setModalState(() => photoPath = null),
+                            icon: const Icon(Icons.delete_outline),
+                            label: const Text('Remove photo'),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: noteCtrl,
+                    maxLines: 4,
+                    decoration: InputDecoration(
+                      hintText: 'Edit note…',
+                      filled: true,
+                      fillColor: NVColors.pale,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          child: const Text('Cancel'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.of(context).pop(true),
+                          child: const Text('Save'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+
+    if (result != true) return;
+
+    final updated = Memento(
+      prompt: original.prompt,
+      photoPath: photoPath,
+      note: noteCtrl.text.trim().isNotEmpty ? noteCtrl.text.trim() : null,
+      date: original.date,
+    );
+    await widget.appState.updateMemento(original, updated);
+    setState(() => _selectedMemento = updated);
+  }
+
   String _monthName(int m) => ['January','February','March','April','May','June','July','August','September','October','November','December'][m-1];
+}
+
+class _JournalDetail extends StatelessWidget {
+  final Memento entry;
+  final VoidCallback onDelete;
+  final VoidCallback onEdit;
+
+  const _JournalDetail({required this.entry, required this.onDelete, required this.onEdit});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: NVColors.pale,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Selected day', style: TextStyle(fontSize: 13, color: NVColors.medium)),
+              Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.edit, size: 18),
+                    label: const Text('Edit'),
+                  ),
+                  TextButton.icon(
+                    onPressed: onDelete,
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    label: const Text('Delete'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(entry.prompt, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: NVColors.dark)),
+          const SizedBox(height: 10),
+          if (entry.photoPath != null)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Image.file(File(entry.photoPath!), height: 180, width: double.infinity, fit: BoxFit.cover),
+            ),
+          if (entry.photoPath != null) const SizedBox(height: 10),
+          if (entry.note != null) Text(entry.note!, style: const TextStyle(fontSize: 15)),
+          const SizedBox(height: 10),
+          Text(
+            '${entry.date.day} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][entry.date.month-1]} ${entry.date.year}',
+            style: const TextStyle(fontSize: 12, color: NVColors.medium),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _CalendarGrid extends StatelessWidget {
   final AppState appState;
   final int year, month;
-  const _CalendarGrid({required this.appState, required this.year, required this.month});
+  final ValueChanged<Memento> onEntrySelected;
+
+  const _CalendarGrid({required this.appState, required this.year, required this.month, required this.onEntrySelected});
 
   @override
   Widget build(BuildContext context) {
@@ -693,7 +1027,7 @@ class _CalendarGrid extends StatelessWidget {
             final hasEntry = entry.date.year != 0;
             final isToday = day == today;
             return GestureDetector(
-              onTap: hasEntry ? () => _showDay(context, entry) : null,
+              onTap: hasEntry ? () => onEntrySelected(entry) : null,
               child: Container(
                 decoration: BoxDecoration(
                   color: hasEntry ? NVColors.pale : Colors.grey.shade100,
@@ -709,7 +1043,7 @@ class _CalendarGrid extends StatelessWidget {
                             bottom: 2, left: 2,
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-                              decoration: BoxDecoration(color: NVColors.dark.withOpacity(0.7), borderRadius: BorderRadius.circular(4)),
+                              decoration: BoxDecoration(color: NVColors.dark.withValues(alpha: 0.7), borderRadius: BorderRadius.circular(4)),
                               child: Text('$day', style: const TextStyle(color: NVColors.pale, fontSize: 9)),
                             ),
                           ),
@@ -729,35 +1063,6 @@ class _CalendarGrid extends StatelessWidget {
           },
         ),
       ],
-    );
-  }
-
-  void _showDay(BuildContext ctx, Memento m) {
-    showModalBottomSheet(
-      context: ctx,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(m.prompt, style: const TextStyle(fontSize: 13, color: NVColors.medium)),
-            const SizedBox(height: 8),
-            if (m.photoPath != null) ...[
-              ClipRRect(borderRadius: BorderRadius.circular(12),
-                  child: Image.file(File(m.photoPath!), height: 180, width: double.infinity, fit: BoxFit.cover)),
-              const SizedBox(height: 8),
-            ],
-            if (m.note != null) Text(m.note!, style: const TextStyle(fontSize: 15)),
-            const SizedBox(height: 8),
-            Text(
-              '${m.date.day} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m.date.month-1]} ${m.date.year}',
-              style: const TextStyle(fontSize: 12, color: NVColors.medium),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
