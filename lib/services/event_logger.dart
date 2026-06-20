@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'api_service.dart';
 import 'device_auth_service.dart';
 
@@ -13,10 +14,10 @@ class EventLogger {
       if (response != null) {
         _currentSessionId = response['sessionId'];
         _sessionStartTime = DateTime.now();
-        print('📍 Session started: $_currentSessionId');
+        debugPrint('📍 Session started: $_currentSessionId');
       }
     } catch (e) {
-      print('Error starting session: $e');
+      debugPrint('Error starting session: $e');
     }
   }
 
@@ -26,11 +27,11 @@ class EventLogger {
 
     try {
       await ApiService.endSession(_currentSessionId!);
-      print('📍 Session ended: $_currentSessionId');
+      debugPrint('📍 Session ended: $_currentSessionId');
       _currentSessionId = null;
       _sessionStartTime = null;
     } catch (e) {
-      print('Error ending session: $e');
+      debugPrint('Error ending session: $e');
     }
   }
 
@@ -40,7 +41,7 @@ class EventLogger {
     Map<String, dynamic>? data,
   }) async {
     if (_currentSessionId == null) {
-      print('⚠️ No active session to log event');
+      debugPrint('⚠️ No active session to log event');
       return;
     }
 
@@ -50,9 +51,9 @@ class EventLogger {
         eventType: eventType,
         data: data,
       );
-      print('📊 Event logged: $eventType');
+      debugPrint('📊 Event logged: $eventType');
     } catch (e) {
-      print('Error logging event: $e');
+      debugPrint('Error logging event: $e');
     }
   }
 

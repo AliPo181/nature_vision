@@ -7,7 +7,7 @@ const bodyParser = require('body-parser');
 const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
@@ -347,6 +347,57 @@ app.get('/api/admin/users', (req, res) => {
 
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// ─── Dev: Seed demo data (GET for convenience in local dev) ─────────────────
+app.get('/api/admin/seed', (req, res) => {
+  const demoUserId = 'demo_user_1';
+  const demoDeviceId = 'demo_device_1';
+
+  if (!users.has(demoUserId)) {
+    users.set(demoUserId, {
+      userId: demoUserId,
+      deviceId: demoDeviceId,
+      name: 'Demo User',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  const session = {
+    sessionId: `session_demo_${Date.now()}`,
+    userId: demoUserId,
+    deviceId: demoDeviceId,
+    startTime: new Date().toISOString(),
+    endTime: null,
+    duration: null,
+    events: [],
+  };
+
+  sessions.push(session);
+
+  const ev1 = {
+    eventId: `event_demo_${Date.now()}_1`,
+    userId: demoUserId,
+    sessionId: session.sessionId,
+    eventType: 'prompt_viewed',
+    timestamp: new Date().toISOString(),
+    data: { prompt: 'Describe the sky' },
+  };
+
+  const ev2 = {
+    eventId: `event_demo_${Date.now()}_2`,
+    userId: demoUserId,
+    sessionId: session.sessionId,
+    eventType: 'photo_taken',
+    timestamp: new Date().toISOString(),
+    data: { photoPath: '/tmp/demo1.jpg' },
+  };
+
+  events.push(ev1, ev2);
+  session.events.push(ev1, ev2);
+
+  res.json({ message: 'Demo seed created', sessionId: session.sessionId, events: [ev1.eventId, ev2.eventId] });
 });
 
 // ─── Start Server ────────────────────────────────────────────────────────

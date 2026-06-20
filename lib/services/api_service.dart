@@ -1,5 +1,6 @@
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'device_auth_service.dart';
 
 class ApiService {
@@ -36,7 +37,7 @@ class ApiService {
 
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) {
-      print('Error uploading memento: $e');
+      debugPrint('Error uploading memento: $e');
       return false;
     }
   }
@@ -57,7 +58,7 @@ class ApiService {
       }
       return null;
     } catch (e) {
-      print('Error fetching mementos: $e');
+      debugPrint('Error fetching mementos: $e');
       return null;
     }
   }
@@ -87,7 +88,7 @@ class ApiService {
 
       return response.statusCode == 200;
     } catch (e) {
-      print('Error updating memento: $e');
+      debugPrint('Error updating memento: $e');
       return false;
     }
   }
@@ -104,7 +105,7 @@ class ApiService {
 
       return response.statusCode == 200 || response.statusCode == 204;
     } catch (e) {
-      print('Error deleting memento: $e');
+      debugPrint('Error deleting memento: $e');
       return false;
     }
   }
@@ -134,7 +135,7 @@ class ApiService {
       }
       return null;
     } catch (e) {
-      print('Error registering user: $e');
+      debugPrint('Error registering user: $e');
       return null;
     }
   }
@@ -154,7 +155,7 @@ class ApiService {
       }
       return null;
     } catch (e) {
-      print('Error fetching user profile: $e');
+      debugPrint('Error fetching user profile: $e');
       return null;
     }
   }
@@ -188,7 +189,7 @@ class ApiService {
 
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) {
-      print('Error reporting analytics: $e');
+      debugPrint('Error reporting analytics: $e');
       return false;
     }
   }
@@ -204,7 +205,7 @@ class ApiService {
 
       return response.statusCode == 200;
     } catch (e) {
-      print('Backend not reachable: $e');
+      debugPrint('Backend not reachable: $e');
       return false;
     }
   }
@@ -230,7 +231,7 @@ class ApiService {
       }
       return null;
     } catch (e) {
-      print('Error starting session: $e');
+      debugPrint('Error starting session: $e');
       return null;
     }
   }
@@ -251,7 +252,7 @@ class ApiService {
 
       return response.statusCode == 200;
     } catch (e) {
-      print('Error ending session: $e');
+      debugPrint('Error ending session: $e');
       return false;
     }
   }
@@ -282,7 +283,7 @@ class ApiService {
 
       return response.statusCode == 201;
     } catch (e) {
-      print('Error logging event: $e');
+      debugPrint('Error logging event: $e');
       return false;
     }
   }

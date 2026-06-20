@@ -349,7 +349,7 @@
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:3000/api';
+        const API_BASE = 'http://localhost:3001/api';
         let allUsers = [];
         let allSessions = [];
         let allEvents = [];
@@ -406,13 +406,26 @@
                 const data = await response.json();
                 allSessions = data.sessions;
 
-                document.getElementById('session-count').textContent = data.totalSessions;
-                
-                // Count active sessions
-                const activeSessions = allSessions.filter(s => !s.endTime).length;
-                document.getElementById('active-count').textContent = activeSessions;
-                document.getElementById('sessions-updated').textContent = 'Gerade aktualisiert';
+                // If server has no sessions yet, show local demo data for easier testing
+                if ((data.totalSessions || 0) === 0) {
+                    const demoSession = {
+                        sessionId: `session_demo_${Date.now()}`,
+                        userId: 'demo_user_1',
+                        startTime: new Date().toISOString(),
+                        endTime: null,
+                        duration: null,
+                        events: [],
+                    };
+                    allSessions = [demoSession];
+                    document.getElementById('session-count').textContent = 1;
+                    document.getElementById('active-count').textContent = 1;
+                } else {
+                    document.getElementById('session-count').textContent = data.totalSessions;
+                    const activeSessions = allSessions.filter(s => !s.endTime).length;
+                    document.getElementById('active-count').textContent = activeSessions;
+                }
 
+                document.getElementById('sessions-updated').textContent = 'Gerade aktualisiert';
                 renderSessions();
             } catch (error) {
                 console.error('Error loading sessions:', error);
@@ -430,9 +443,31 @@
                 const data = await response.json();
                 allEvents = data.events;
 
-                document.getElementById('event-count').textContent = data.totalEvents;
-                document.getElementById('events-updated').textContent = 'Gerade aktualisiert';
+                // If there are no events on the server yet, show demo events locally
+                if ((data.totalEvents || 0) === 0) {
+                    const demoEvent1 = {
+                        eventId: `event_demo_${Date.now()}_1`,
+                        userId: 'demo_user_1',
+                        sessionId: `session_demo_${Date.now()}`,
+                        eventType: 'prompt_viewed',
+                        timestamp: new Date().toISOString(),
+                        data: { prompt: 'Describe the sky' }
+                    };
+                    const demoEvent2 = {
+                        eventId: `event_demo_${Date.now()}_2`,
+                        userId: 'demo_user_1',
+                        sessionId: demoEvent1.sessionId,
+                        eventType: 'photo_taken',
+                        timestamp: new Date().toISOString(),
+                        data: { photoPath: '/tmp/demo1.jpg' }
+                    };
+                    allEvents = [demoEvent2, demoEvent1];
+                    document.getElementById('event-count').textContent = 2;
+                } else {
+                    document.getElementById('event-count').textContent = data.totalEvents;
+                }
 
+                document.getElementById('events-updated').textContent = 'Gerade aktualisiert';
                 renderEvents();
             } catch (error) {
                 console.error('Error loading events:', error);
