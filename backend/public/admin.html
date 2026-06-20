@@ -297,23 +297,10 @@
                 <h3>Aktive Sessions</h3>
                 <div class="number" id="active-count">0</div>
             </div>
-        </div>
-
-        <div class="tabs">
-            <div class="tab-buttons">
-                <button class="tab-btn active" onclick="switchTab('users')">👥 Benutzer</button>
-                <button class="tab-btn" onclick="switchTab('sessions')">📱 Sessions</button>
-                <button class="tab-btn" onclick="switchTab('events')">📊 Events</button>
-            </div>
-
-            <!-- Users Tab -->
-            <div class="tab-content active" id="users-tab">
-                <div class="controls">
-                    <button class="refresh-btn" onclick="loadUsers()">🔄 Aktualisieren</button>
-                    <span class="timestamp" id="users-updated"></span>
+                <div class="stat-card">
+                    <h3>Reset Backend</h3>
+                    <button class="refresh-btn" style="width:100%;" onclick="clearAdminData()">Daten löschen</button>
                 </div>
-                <div class="loading" id="users-loading">
-                    <div class="spinner"></div>
                 </div>
                 <div class="users-list" id="users-list"></div>
             </div>
@@ -406,24 +393,9 @@
                 const data = await response.json();
                 allSessions = data.sessions;
 
-                // If server has no sessions yet, show local demo data for easier testing
-                if ((data.totalSessions || 0) === 0) {
-                    const demoSession = {
-                        sessionId: `session_demo_${Date.now()}`,
-                        userId: 'demo_user_1',
-                        startTime: new Date().toISOString(),
-                        endTime: null,
-                        duration: null,
-                        events: [],
-                    };
-                    allSessions = [demoSession];
-                    document.getElementById('session-count').textContent = 1;
-                    document.getElementById('active-count').textContent = 1;
-                } else {
-                    document.getElementById('session-count').textContent = data.totalSessions;
-                    const activeSessions = allSessions.filter(s => !s.endTime).length;
-                    document.getElementById('active-count').textContent = activeSessions;
-                }
+                document.getElementById('session-count').textContent = data.totalSessions || 0;
+                const activeSessions = allSessions.filter(s => !s.endTime).length;
+                document.getElementById('active-count').textContent = activeSessions;
 
                 document.getElementById('sessions-updated').textContent = 'Gerade aktualisiert';
                 renderSessions();
@@ -443,29 +415,7 @@
                 const data = await response.json();
                 allEvents = data.events;
 
-                // If there are no events on the server yet, show demo events locally
-                if ((data.totalEvents || 0) === 0) {
-                    const demoEvent1 = {
-                        eventId: `event_demo_${Date.now()}_1`,
-                        userId: 'demo_user_1',
-                        sessionId: `session_demo_${Date.now()}`,
-                        eventType: 'prompt_viewed',
-                        timestamp: new Date().toISOString(),
-                        data: { prompt: 'Describe the sky' }
-                    };
-                    const demoEvent2 = {
-                        eventId: `event_demo_${Date.now()}_2`,
-                        userId: 'demo_user_1',
-                        sessionId: demoEvent1.sessionId,
-                        eventType: 'photo_taken',
-                        timestamp: new Date().toISOString(),
-                        data: { photoPath: '/tmp/demo1.jpg' }
-                    };
-                    allEvents = [demoEvent2, demoEvent1];
-                    document.getElementById('event-count').textContent = 2;
-                } else {
-                    document.getElementById('event-count').textContent = data.totalEvents;
-                }
+                document.getElementById('event-count').textContent = data.totalEvents || 0;
 
                 document.getElementById('events-updated').textContent = 'Gerade aktualisiert';
                 renderEvents();
@@ -620,6 +570,21 @@
         }
 
         // ─── Initial Load ────────────────────────────────────────────────
+
+        async function clearAdminData() {
+            if (!confirm('Alle Admin-Daten löschen? Dadurch werden Nutzer, Sessions, Events und Analysen entfernt.')) {
+                return;
+            }
+
+            try {
+                await fetch(`${API_BASE}/admin/clear`, { method: 'POST' });
+                loadUsers();
+                loadSessions();
+                loadEvents();
+            } catch (error) {
+                console.error('Error clearing admin data:', error);
+            }
+        }
 
         window.addEventListener('load', () => {
             loadUsers();

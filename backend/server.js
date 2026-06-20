@@ -343,6 +343,16 @@ app.get('/api/admin/users', (req, res) => {
   });
 });
 
+app.post('/api/admin/clear', (req, res) => {
+  users.clear();
+  mementos.clear();
+  analytics.length = 0;
+  sessions.length = 0;
+  events.length = 0;
+
+  res.json({ message: 'Admin data cleared' });
+});
+
 // ─── Admin Dashboard ────────────────────────────────────────────────────
 
 app.get('/admin', (req, res) => {

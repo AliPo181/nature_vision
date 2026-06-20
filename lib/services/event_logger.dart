@@ -4,6 +4,7 @@ import 'device_auth_service.dart';
 
 class EventLogger {
   static String? _currentSessionId;
+  static DateTime? _sessionStartTime;
 
   /// Startet eine neue Session wenn die App geöffnet wird
   static Future<void> startSession() async {
