@@ -4,9 +4,21 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
+import 'services/notification_service.dart';
+import 'services/analytics_service.dart';
+import 'services/event_logger.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.initialize();
+  await NotificationService.scheduleDailyReminder(
+    hour: 12,
+    minute: 0,
+    title: 'Nature Vision',
+    body: 'Time for your nature walk! 🌿',
+  );
+  await AnalyticsService.initSession();
+  await EventLogger.startSession();
   runApp(const NatureVisionApp());
 }
 
@@ -179,14 +191,44 @@ class NatureVisionApp extends StatefulWidget {
   State<NatureVisionApp> createState() => _NatureVisionAppState();
 }
 
-class _NatureVisionAppState extends State<NatureVisionApp> {
+class _NatureVisionAppState extends State<NatureVisionApp> with WidgetsBindingObserver {
   final _state = AppState();
   bool _loaded = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _state.load().then((_) => setState(() => _loaded = true));
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    AnalyticsService.endSession();
+    EventLogger.endSession();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        // App wurde wieder aktiv
+        break;
+      case AppLifecycleState.paused:
+        // App wurde in den Hintergrund verschoben
+        AnalyticsService.endSession();
+        break;
+      case AppLifecycleState.detached:
+        // App wird geschlossen
+        AnalyticsService.endSession();
+        break;
+      case AppLifecycleState.hidden:
+        break;
+      case AppLifecycleState.inactive:
+        break;
+    }
   }
 
   @override
@@ -256,6 +298,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       return;
     }
     await widget.appState.completeOnboarding(n);
+    await EventLogger.logOnboardingCompleted(n);
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => MainShell(appState: widget.appState)),
@@ -395,11 +438,16 @@ class _MainShellState extends State<MainShell> {
       WalkScreen(appState: widget.appState),
       JournalScreen(appState: widget.appState),
     ];
+    final tabNames = ['Home', 'Walk', 'Journal'];
+    
     return Scaffold(
       body: IndexedStack(index: _tab, children: screens),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _tab,
-        onTap: (i) => setState(() => _tab = i),
+        onTap: (i) {
+          setState(() => _tab = i);
+          EventLogger.logTabChanged(tabNames[i]);
+        },
         selectedItemColor: NVColors.dark,
         unselectedItemColor: Colors.grey,
         items: const [
@@ -413,6 +461,66 @@ class _MainShellState extends State<MainShell> {
 }
 
 // ─── Home Screen ─────────────────────────────────────────────────────────────
+
+class _AnalyticsCard extends StatefulWidget {
+  const _AnalyticsCard();
+
+  @override
+  State<_AnalyticsCard> createState() => _AnalyticsCardState();
+}
+
+class _AnalyticsCardState extends State<_AnalyticsCard> {
+  late Future<Map<String, dynamic>> _analyticsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _analyticsFuture = AnalyticsService.getDailyAnalytics();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: _analyticsFuture,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const SizedBox.shrink();
+        }
+
+        final data = snapshot.data!;
+        final opens = data['opens'] as int;
+        final timeStr = data['formattedTime'] as String;
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: NVColors.pale,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Today\'s activity', 
+                      style: TextStyle(fontSize: 11, color: NVColors.light, letterSpacing: 0.5)),
+                  const SizedBox(height: 8),
+                  Text('$opens opens', 
+                      style: const TextStyle(fontSize: 14, color: NVColors.dark, fontWeight: FontWeight.w600)),
+                  Text(timeStr, 
+                      style: const TextStyle(fontSize: 12, color: NVColors.medium)),
+                ],
+              ),
+              const Icon(Icons.analytics_outlined, size: 32, color: NVColors.accent),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
 
 class HomeScreen extends StatelessWidget {
   final AppState appState;
@@ -468,6 +576,9 @@ class HomeScreen extends StatelessWidget {
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+            // Analytics card
+            _AnalyticsCard(),
             const SizedBox(height: 16),
             // Today's prompt
             Container(
@@ -527,14 +638,26 @@ class _WalkScreenState extends State<WalkScreen> {
   bool _done = false;
   final _picker = ImagePicker();
 
+  @override
+  void initState() {
+    super.initState();
+    EventLogger.logPromptViewed(widget.appState.currentPrompt);
+  }
+
   Future<void> _pickPhoto() async {
     final picked = await _picker.pickImage(source: ImageSource.camera, imageQuality: 80);
-    if (picked != null) setState(() => _photo = File(picked.path));
+    if (picked != null) {
+      setState(() => _photo = File(picked.path));
+      await EventLogger.logPhotoTaken(picked.path);
+    }
   }
 
   Future<void> _pickGalleryPhoto() async {
     final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
-    if (picked != null) setState(() => _photo = File(picked.path));
+    if (picked != null) {
+      setState(() => _photo = File(picked.path));
+      await EventLogger.logPhotoTaken(picked.path);
+    }
   }
 
   Future<void> _markDone() async {
@@ -545,13 +668,22 @@ class _WalkScreenState extends State<WalkScreen> {
       );
       return;
     }
+    
+    final prompt = widget.appState.currentPrompt;
+    
+    if (note.isNotEmpty) {
+      await EventLogger.logNoteAdded(note);
+    }
+    
     final m = Memento(
-      prompt: widget.appState.currentPrompt,
+      prompt: prompt,
       photoPath: _photo?.path,
       note: note.isNotEmpty ? note : null,
       date: DateTime.now(),
     );
     await widget.appState.addMemento(m);
+    await EventLogger.logMementoSaved(prompt);
+    
     setState(() { _done = true; _photo = null; _noteCtrl.clear(); });
     await Future.delayed(const Duration(seconds: 2));
     if (mounted) setState(() => _done = false);
@@ -560,6 +692,7 @@ class _WalkScreenState extends State<WalkScreen> {
   Future<void> _skipPrompt() async {
     if (_photo == null && _noteCtrl.text.trim().isEmpty) {
       await widget.appState.skipPrompt();
+      await EventLogger.logPromptSkipped(widget.appState.currentPrompt);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Prompt skipped. The next prompt is ready.')),
@@ -580,6 +713,7 @@ class _WalkScreenState extends State<WalkScreen> {
     );
     if (!mounted || confirmed != true) return;
     await widget.appState.skipPrompt();
+    await EventLogger.logPromptSkipped(widget.appState.currentPrompt);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Prompt skipped. The next prompt is ready.')),
