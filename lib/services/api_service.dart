@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'device_auth_service.dart';
 
 class ApiService {
+  // NOTE: Event visibility/privacy is handled by backend. The app only sends event data for admin purposes.
+
   // ⚠️ Ändere diese URL zu deinem Backend-Server
   static const String baseUrl = 'https://nv.cipot.dev/api/';
 
@@ -13,7 +15,7 @@ class ApiService {
   // ─── Mementos ────────────────────────────────────────────────────────────
 
   /// Uploaded ein neues Memento zum Backend
-  static Future<bool> uploadMemento({
+  static Future<String?> uploadMemento({
     required String prompt,
     required String? photoPath,
     required String? note,
@@ -34,18 +36,57 @@ class ApiService {
       if (photoPath != null && photoPath.isNotEmpty) {
         final file = File(photoPath);
         if (await file.exists()) {
+          // Backend field name (current guess): "photo"
           request.files.add(await http.MultipartFile.fromPath('photo', photoPath));
         }
       }
 
-      final streamedResponse = await request.send().timeout(const Duration(seconds: 20));
+      final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
       final response = await http.Response.fromStream(streamedResponse);
-      return response.statusCode == 200 || response.statusCode == 201;
+
+      final bodyText = response.body.trim();
+
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        debugPrint(
+          'uploadMemento failed: status=${response.statusCode}, body=$bodyText',
+        );
+        // Keep a clear signal in logs for backend alignment.
+        debugPrint('uploadMemento request preview: promptLength=${prompt.length}, photoPath=$photoPath, notePresent=${note != null}');
+        return null;
+      }
+
+
+      if (bodyText.isEmpty) {
+        // Backend might return an empty body but still create the record.
+        // In that case we can't get the id.
+        debugPrint('uploadMemento success but empty body (no id returned).');
+        return null;
+      }
+
+      final decoded = jsonDecode(bodyText);
+      if (decoded is Map<String, dynamic>) {
+        final id =
+            decoded['mementoId'] ?? decoded['id'] ?? decoded['_id'] ?? decoded['uuid'];
+        return id?.toString();
+      }
+
+      // Sometimes backend returns: {"data": {"id": "..."}}
+      if (decoded is Map) {
+        final data = decoded['data'];
+        if (data is Map) {
+          final id = data['mementoId'] ?? data['id'] ?? data['_id'] ?? data['uuid'];
+          return id?.toString();
+        }
+      }
+
+      debugPrint('uploadMemento success but unrecognized response body: $bodyText');
+      return null;
     } catch (e) {
       debugPrint('Error uploading memento: $e');
-      return false;
+      return null;
     }
   }
+
 
   /// Lädt alle Mementos vom Backend herunter
   static Future<List<Map<String, dynamic>>?> fetchMementos() async {
@@ -270,6 +311,8 @@ class ApiService {
     required String eventType,
     Map<String, dynamic>? data,
   }) async {
+    // App does not store or display these events to the user; backend decides what admin can view.
+
     try {
       final headers = await DeviceAuthService.getAuthHeaders();
       headers['Content-Type'] = 'application/json';

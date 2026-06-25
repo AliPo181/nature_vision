@@ -4,7 +4,8 @@ import 'device_auth_service.dart';
 
 class EventLogger {
   static String? _currentSessionId;
-  static DateTime? _sessionStartTime;
+
+
 
   /// Startet eine neue Session wenn die App geöffnet wird
   static Future<void> startSession() async {
@@ -14,8 +15,8 @@ class EventLogger {
       final response = await ApiService.startSession(deviceId);
       if (response != null) {
         _currentSessionId = response['sessionId'];
-        _sessionStartTime = DateTime.now();
         debugPrint('📍 Session started: $_currentSessionId');
+
       }
     } catch (e) {
       debugPrint('Error starting session: $e');
@@ -30,7 +31,7 @@ class EventLogger {
       await ApiService.endSession(_currentSessionId!);
       debugPrint('📍 Session ended: $_currentSessionId');
       _currentSessionId = null;
-      _sessionStartTime = null;
+
     } catch (e) {
       debugPrint('Error ending session: $e');
     }

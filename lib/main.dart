@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
@@ -11,16 +12,38 @@ import 'services/event_logger.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await NotificationService.initialize();
-  await NotificationService.scheduleDailyReminder(
-    hour: 12,
-    minute: 0,
-    title: 'Nature Vision',
-    body: 'Time for your nature walk! 🌿',
-  );
-  await AnalyticsService.initSession();
-  await EventLogger.startSession();
+
+  // Always show UI ASAP; backend/analytics setup should never block launching.
+  // We still attempt these services, but failures must not prevent runApp.
+
+  try {
+    await NotificationService.initialize();
+
+    await NotificationService.scheduleDailyReminder(
+      hour: 12,
+      minute: 0,
+      title: 'Nature Vision',
+      body: 'Time for your nature walk! 🌿',
+    );
+  } catch (e) {
+    debugPrint('Error initializing notifications: $e');
+  }
+  try {
+    await AnalyticsService.initSession();
+  } catch (e) {
+    debugPrint('Error initializing analytics: $e');
+  }
+  // Defer session-related initialization so first frame is not delayed.
+  Future.microtask(() async {
+    try {
+      await EventLogger.startSession();
+    } catch (e) {
+      debugPrint('Error starting session: $e');
+    }
+  });
+
   runApp(const NatureVisionApp());
+
 }
 
 // ─── Theme ───────────────────────────────────────────────────────────────────
@@ -37,14 +60,16 @@ class NVColors {
 // ─── Data Model ──────────────────────────────────────────────────────────────
 
 class Memento {
+  final String? id;
   final String prompt;
   final String? photoPath;
   final String? note;
   final DateTime date;
 
-  Memento({required this.prompt, this.photoPath, this.note, required this.date});
+  Memento({this.id, required this.prompt, this.photoPath, this.note, required this.date});
 
   Map<String, dynamic> toJson() => {
+    if (id != null) 'id': id,
     'prompt': prompt,
     'photoPath': photoPath,
     'note': note,
@@ -52,6 +77,7 @@ class Memento {
   };
 
   factory Memento.fromJson(Map<String, dynamic> j) => Memento(
+    id: j['id'],
     prompt: j['prompt'],
     photoPath: j['photoPath'],
     note: j['note'],
@@ -59,15 +85,59 @@ class Memento {
   );
 }
 
+class PendingUpload {
+  final String localId;
+  final String prompt;
+  final String? photoPath;
+  final String? note;
+  final DateTime date;
+  final int createdAtMillis;
+
+  PendingUpload({
+    required this.localId,
+    required this.prompt,
+    required this.photoPath,
+    required this.note,
+    required this.date,
+    required this.createdAtMillis,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'localId': localId,
+    'prompt': prompt,
+    'photoPath': photoPath,
+    'note': note,
+    'date': date.toIso8601String(),
+    'createdAtMillis': createdAtMillis,
+  };
+
+  factory PendingUpload.fromJson(Map<String, dynamic> j) => PendingUpload(
+    localId: j['localId'],
+    prompt: j['prompt'],
+    photoPath: j['photoPath'],
+    note: j['note'],
+    date: DateTime.parse(j['date']),
+    createdAtMillis: j['createdAtMillis'] ?? 0,
+  );
+}
+
+
 // ─── App State ────────────────────────────────────────────────────────────────
 
 class AppState extends ChangeNotifier {
   bool onboarded = false;
+
   String name = '';
   int streak = 0;
   int currentPromptIndex = 0;
   List<int> promptOrder = [];
   List<Memento> mementos = [];
+
+  List<PendingUpload> pendingUploads = [];
+
+  static const String _pendingUploadsKey = 'pending_uploads';
+
+
 
   static const _prompts = [
     'Find something that looks soft',
@@ -114,6 +184,13 @@ class AppState extends ChangeNotifier {
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
+
+    final pendingRaw = prefs.getString(_pendingUploadsKey);
+    if (pendingRaw != null) {
+      final list = jsonDecode(pendingRaw) as List;
+      pendingUploads = list.map((e) => PendingUpload.fromJson(e)).toList();
+    }
+
     onboarded = prefs.getBool('onboarded') ?? false;
     name = prefs.getString('name') ?? '';
     streak = prefs.getInt('streak') ?? 0;
@@ -134,6 +211,17 @@ class AppState extends ChangeNotifier {
 
   Future<void> save() async {
     final prefs = await SharedPreferences.getInstance();
+
+    // Persist offline upload queue
+    if (pendingUploads.isNotEmpty) {
+      await prefs.setString(
+        _pendingUploadsKey,
+        jsonEncode(pendingUploads.map((p) => p.toJson()).toList()),
+      );
+    } else {
+      await prefs.remove(_pendingUploadsKey);
+    }
+
     await prefs.setBool('onboarded', onboarded);
     await prefs.setString('name', name);
     await prefs.setInt('streak', streak);
@@ -182,7 +270,45 @@ class AppState extends ChangeNotifier {
     await save();
     notifyListeners();
   }
+
+  // Flush queued failed uploads (offline outbox) to the backend.
+  Future<void> flushPendingUploads() async {
+    if (pendingUploads.isEmpty) return;
+
+    // Iterate over a copy, so we can remove successful ones.
+    final toTry = List<PendingUpload>.from(pendingUploads);
+    for (final p in toTry) {
+      final uploadedId = await ApiService.uploadMemento(
+        prompt: p.prompt,
+        photoPath: p.photoPath,
+        note: p.note,
+        date: p.date,
+      );
+
+      if (uploadedId != null) {
+        // On success: add to in-app journal and remove from queue.
+        mementos.insert(
+          0,
+          Memento(
+            id: uploadedId,
+            prompt: p.prompt,
+            photoPath: p.photoPath,
+            note: p.note,
+            date: p.date,
+          ),
+        );
+        pendingUploads.removeWhere((x) => x.localId == p.localId);
+        await save();
+        EventLogger.logMementoSaved(p.prompt);
+      }
+    }
+
+    // Persist queue state
+    await save();
+    notifyListeners();
+  }
 }
+
 
 // ─── Root App ─────────────────────────────────────────────────────────────────
 
@@ -215,14 +341,21 @@ class _NatureVisionAppState extends State<NatureVisionApp> with WidgetsBindingOb
   void didChangeAppLifecycleState(AppLifecycleState state) {
     switch (state) {
       case AppLifecycleState.resumed:
-        // App wurde wieder aktiv
+        // Flush any queued failed uploads when app becomes active again.
+        Future.microtask(() async {
+          try {
+            if (_state.pendingUploads.isNotEmpty) {
+              await _state.flushPendingUploads();
+            }
+          } catch (e) {
+            debugPrint('Error flushing pending uploads: $e');
+          }
+        });
         break;
       case AppLifecycleState.paused:
-        // App wurde in den Hintergrund verschoben
         AnalyticsService.endSession();
         break;
       case AppLifecycleState.detached:
-        // App wird geschlossen
         AnalyticsService.endSession();
         break;
       case AppLifecycleState.hidden:
@@ -231,6 +364,7 @@ class _NatureVisionAppState extends State<NatureVisionApp> with WidgetsBindingOb
         break;
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -578,8 +712,9 @@ class HomeScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            // Analytics card
-            _AnalyticsCard(),
+            // Analytics card (hide on web)
+            if (!kIsWeb) _AnalyticsCard(),
+
             const SizedBox(height: 16),
             // Today's prompt
             Container(
@@ -661,7 +796,9 @@ class _WalkScreenState extends State<WalkScreen> {
     }
   }
 
-  Future<void> _markDone() async {
+Future<void> _markDone() async {
+    setState(() {});
+
     final note = _noteCtrl.text.trim();
     if (_photo == null && note.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -682,16 +819,52 @@ class _WalkScreenState extends State<WalkScreen> {
       note: note.isNotEmpty ? note : null,
       date: DateTime.now(),
     );
-    final uploaded = await ApiService.uploadMemento(
+    final uploadedId = await ApiService.uploadMemento(
       prompt: prompt,
       photoPath: _photo?.path,
       note: note.isNotEmpty ? note : null,
       date: m.date,
     );
-    if (!uploaded) {
-      debugPrint('Warning: Memento upload failed, saved locally only.');
+
+    if (uploadedId != null) {
+      // Ensure server-backed record exists: also remove any queued duplicate for this prompt/date
+      final mWithId = Memento(
+        id: uploadedId,
+
+        prompt: m.prompt,
+        photoPath: m.photoPath,
+        note: m.note,
+        date: m.date,
+      );
+      await widget.appState.addMemento(mWithId);
+    } else {
+      debugPrint('Warning: Memento upload failed (queued for retry).');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Upload failed. Will retry automatically.')),
+        );
+      }
+
+      // Enqueue for offline retry.
+      final localId = '${DateTime.now().microsecondsSinceEpoch}-${DateTime.now().millisecondsSinceEpoch}';
+      widget.appState.pendingUploads.add(
+
+        PendingUpload(
+          localId: localId,
+          prompt: m.prompt,
+          photoPath: m.photoPath,
+          note: m.note,
+          date: m.date,
+          createdAtMillis: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+      await widget.appState.save();
+
+      // Still show it in local journal immediately.
+      await widget.appState.addMemento(m);
     }
-    await widget.appState.addMemento(m);
+
+
     await EventLogger.logMementoSaved(prompt);
     
     setState(() { _done = true; _photo = null; _noteCtrl.clear(); });
@@ -775,7 +948,7 @@ class _WalkScreenState extends State<WalkScreen> {
             ),
           ),
           const SizedBox(height: 20),
-          if (_photo != null) ...[
+          if (_photo != null && !kIsWeb) ...[
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
               child: Image.file(_photo!, height: 200, width: double.infinity, fit: BoxFit.cover),
@@ -1066,6 +1239,7 @@ class _JournalScreenState extends State<JournalScreen> {
       date: original.date,
     );
     await widget.appState.updateMemento(original, updated);
+    // UI-only update for now; backend sync for edits/deletes will be added next.
     setState(() => _selectedMemento = updated);
   }
 
