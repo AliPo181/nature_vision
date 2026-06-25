@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -5,7 +6,7 @@ import 'device_auth_service.dart';
 
 class ApiService {
   // ⚠️ Ändere diese URL zu deinem Backend-Server
-  static const String baseUrl = 'http://localhost:3000/api';
+  static const String baseUrl = 'https://nv.cipot.dev/api/';
 
   static final _client = http.Client();
 
@@ -20,21 +21,25 @@ class ApiService {
   }) async {
     try {
       final headers = await DeviceAuthService.getAuthHeaders();
-      headers['Content-Type'] = 'application/json';
+      final uri = Uri.parse('$baseUrl/mementos');
+      final request = http.MultipartRequest('POST', uri)
+        ..headers.addAll(headers)
+        ..fields['prompt'] = prompt
+        ..fields['date'] = date.toIso8601String();
 
-      final body = jsonEncode({
-        'prompt': prompt,
-        'photoPath': photoPath,
-        'note': note,
-        'date': date.toIso8601String(),
-      });
+      if (note != null) {
+        request.fields['note'] = note;
+      }
 
-      final response = await _client.post(
-        Uri.parse('$baseUrl/mementos'),
-        headers: headers,
-        body: body,
-      ).timeout(const Duration(seconds: 10));
+      if (photoPath != null && photoPath.isNotEmpty) {
+        final file = File(photoPath);
+        if (await file.exists()) {
+          request.files.add(await http.MultipartFile.fromPath('photo', photoPath));
+        }
+      }
 
+      final streamedResponse = await request.send().timeout(const Duration(seconds: 20));
+      final response = await http.Response.fromStream(streamedResponse);
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) {
       debugPrint('Error uploading memento: $e');

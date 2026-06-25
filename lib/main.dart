@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
+import 'services/api_service.dart';
 import 'services/notification_service.dart';
 import 'services/analytics_service.dart';
 import 'services/event_logger.dart';
@@ -681,6 +682,15 @@ class _WalkScreenState extends State<WalkScreen> {
       note: note.isNotEmpty ? note : null,
       date: DateTime.now(),
     );
+    final uploaded = await ApiService.uploadMemento(
+      prompt: prompt,
+      photoPath: _photo?.path,
+      note: note.isNotEmpty ? note : null,
+      date: m.date,
+    );
+    if (!uploaded) {
+      debugPrint('Warning: Memento upload failed, saved locally only.');
+    }
     await widget.appState.addMemento(m);
     await EventLogger.logMementoSaved(prompt);
     

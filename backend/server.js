@@ -4,16 +4,35 @@
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const multer = require('multer');
+const fs = require('fs');
 const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadsDir),
+    filename: (req, file, cb) => {
+      const timestamp = Date.now();
+      const ext = path.extname(file.originalname) || '';
+      cb(null, `memento_${timestamp}${ext}`);
+    },
+  }),
+});
 
 // Middleware
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/uploads', express.static(uploadsDir));
 
 // ─── In-Memory Database (nur für Demo, verwende MongoDB/PostgreSQL in Production) ────────
 
@@ -73,9 +92,9 @@ app.get('/api/users/profile', (req, res) => {
 
 // ─── Mementos Endpoints ────────────────────────────────────────────────
 
-app.post('/api/mementos', (req, res) => {
+app.post('/api/mementos', upload.single('photo'), (req, res) => {
   const userId = req.get('X-User-ID');
-  const { prompt, photoPath, note, date } = req.body;
+  const { prompt, note, date } = req.body;
 
   if (!userId) {
     return res.status(401).json({ error: 'Missing X-User-ID header' });
@@ -86,11 +105,13 @@ app.post('/api/mementos', (req, res) => {
   }
 
   const id = `memento_${Date.now()}`;
+  const photoUrl = req.file ? `/uploads/${req.file.filename}` : null;
+
   const memento = {
     id,
     userId,
     prompt,
-    photoPath,
+    photoUrl,
     note,
     date,
     createdAt: new Date().toISOString(),
